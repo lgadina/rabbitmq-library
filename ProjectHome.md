@@ -1,0 +1,1 @@
+FreePascal/Delphi RabbitMQ AMQP library
