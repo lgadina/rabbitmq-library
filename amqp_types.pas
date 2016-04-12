@@ -8945,7 +8945,10 @@ register_amqp_method(amqp_empty_method);
 finalization
 
 if famqp_method_factory <> nil then
+ begin
+  famqp_method_factory.Clear;
   FreeAndNil(famqp_method_factory);
+ end;
 
 if FDebugList <> nil then
  FreeAndNil(FDebugList);

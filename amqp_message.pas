@@ -33,7 +33,7 @@ type
    Procedure BasicNAck( ADeliveryTag: UInt64; ARequeue: Boolean = True; AMultiple: Boolean = False ); Overload;
    Procedure BasicAck( AMessage: IAMQPMessage; AMultiple: Boolean = False ); Overload;
    Procedure BasicAck( ADeliveryTag: UInt64; AMultiple: Boolean = False ); Overload;
-   procedure MessageException(AMessage: IAMQPMessage; AException: Exception);
+   Procedure MessageException(AMessage: IAMQPMessage; AException: Exception);
   end;
 
   IAMQPMessage = interface

@@ -74,7 +74,7 @@ type
   end;
 
   TAMQPFrameList = specialize GAMQPFrameList<IAMQPFrame>;
-
+  TAMQPMessageList = specialize GAMQPFrameList<IAMQPMessage>;
 
   { TAMQPFrameQueue }
 
@@ -134,14 +134,18 @@ type
           FMessage: IAMQPMessage;
           FSendAck: Boolean;
           FSemaphore: TAMQPSemaphore;
+          FConsumerSemaphore: TAMQPSemaphore;
         protected
           procedure Execute; override;
         public
-         constructor Create(AConsumer: TAMQPConsumer; AMessage: IAMQPMessage; ASemaphore: TAMQPSemaphore = -1);
+         constructor Create(AConsumer: TAMQPConsumer; AMessage: IAMQPMessage; AConsumerSemaphore: TAMQPSemaphore = -1; ASemaphore: TAMQPSemaphore = -1);
          destructor Destroy; override;
         end;
 
+
   private
+    FConsumerSemaphore: TAMQPSemaphore;
+    FConsumerThreadCount: Integer;
     FConsumerTag: String;
     FMessageHandler: TAMQPConsumerMethod;
     FMessageQueue: TAMQPMessageQueue;
@@ -150,6 +154,8 @@ type
     FSemaphore: TAMQPSemaphore;
     FChannel: IAMQPChannel;
     FChannelStat: IAMQPChannelStat;
+    FMaxThread: Word;
+    procedure WaitAllThreadEnd;
   protected
     procedure DoReceive(AChannel: IAMQPChannel; AMessage: IAMQPMessage; out SendAck: Boolean);
     procedure DoIncStat;
@@ -163,7 +169,7 @@ type
     Property MessageHandler : TAMQPConsumerMethod   read FMessageHandler write FMessageHandler;
     Property MessageQueue   : TAMQPMessageQueue read FMessageQueue;
     Procedure Receive( AMessage: IAMQPMessage );
-    Constructor Create( AChannel: IAMQPChannel; AQueueName, AConsumerTag: String; AMessageHandler: TAMQPConsumerMethod; AMessageQueue: TAMQPMessageQueue; ASemaphore: TAMQPSemaphore );
+    Constructor Create( AChannel: IAMQPChannel; AQueueName, AConsumerTag: String; AMessageHandler: TAMQPConsumerMethod; AMessageQueue: TAMQPMessageQueue; ASemaphore: TAMQPSemaphore; AMaxThread: Word );
     Destructor Destroy; Override;
   end;
 
@@ -339,6 +345,7 @@ type
     FDeliverQueue: TAMQPFrameList;
     FTimeout: Integer;
     FSemaphore: TAMQPSemaphore;
+    FChannelMaxThread: Word;
     function GetConsumerThreadCount: Integer;
     function GetIsOpen: boolean;
     function GetQueue: TAMQPFrameQueue;
@@ -368,7 +375,7 @@ type
     procedure DecConsumerThread;
     property ConsumerThreadCount: Integer read GetConsumerThreadCount;
   public
-    constructor Create(AConnection: IAMQPConnection; AChannelId: Word; ASemaphore: TAMQPSemaphore);
+    constructor Create(AConnection: IAMQPConnection; AChannelId: Word; ASemaphore: TAMQPSemaphore; AChannelMaxThread: Word);
     destructor Destroy; override;
     property Id: Word read GetId;
     property Queue: TAMQPFrameQueue read GetQueue;
@@ -424,7 +431,11 @@ type
 
   end;
 
+  TAMQPOnProtocolError = procedure(AObject: TObject; AMessage: String; AFrame: IAMQPFrame; var AHandled: Boolean) of object;
+  TAMQPOnServerDisconnect = procedure(AObject: TObject; ACode: Word; AMessage: String) of object;
+  TAMQPOnDisconnect = procedure(AObject: TObject) of object;
   TAMQPOnChannelClose = procedure(AObject: TObject; AChannel: IAMQPChannel) of object;
+  TAMQPOnChannelOpen = procedure(AObject: TObject; AChannel: IAMQPChannel) of object;
   TAMQPOnMessageException = procedure(AObject: TObject; AChannel: IAMQPChannel; AMessage: IAMQPMessage; AException: Exception) of object;
 
   { TAMQPConnection }
@@ -433,7 +444,12 @@ type
   private
     FOnChannelClose: TAMQPOnChannelClose;
     FOnChannelCloseServer: TAMQPOnChannelClose;
+    FOnChannelOpen: TAMQPOnChannelOpen;
+    FOnConnect: TNotifyEvent;
+    FOnDisconnect: TAMQPOnDisconnect;
     FOnMessageException: TAMQPOnMessageException;
+    FOnProtocolError: TAMQPOnProtocolError;
+    FOnServerDisconnect: TAMQPOnServerDisconnect;
     FTCP: TIdTCPClient;
     FHost: String;
     FPort: Word;
@@ -450,6 +466,8 @@ type
     FSemaphore: cint;
     FMaxThread: Word;
     FConsumerThreadCount: Cardinal;
+    FChannelMaxThread: Word;
+    function GetChannelMaxThread: Word;
     function GetConsumerThreadCount: Integer;
     function GetHost: String;
     function GetMaxSize: Integer;
@@ -459,6 +477,7 @@ type
     function GetTimeOut: Integer;
     function GetUsername: String;
     function GetVirtualHost: String;
+    procedure SetChannelMaxThread(AValue: Word);
     procedure SetHost(AValue: String);
     procedure SetMaxSize(AValue: Integer);
     procedure SetMaxThread(AValue: Word);
@@ -474,9 +493,15 @@ type
     function ReadFrame: IAMQPFrame;
     function ReadMethod(AExpected: array of TGUID): IAMQPFrame;
     procedure DoOnChannelClose(AChannel: IAMQPChannel);
+    procedure DoOnChannelOpen(AChannel: IAMQPChannel);
     procedure DoOnChannelCloseServer(AChannel: IAMQPChannel);
     procedure DoOnMessageException(AChannel: IAMQPChannel; AMessage: IAMQPMessage; AException: Exception);
+    procedure DoOnConnect;
+    procedure DoOnDisconnect;
+    procedure DoOnServerDisconnect(ACode: Word; AMessage: String);
+    procedure DoOnProtocolError(AMessage: String; AFrame: IAMQPFrame; var AHandled: Boolean);
     procedure WriteFrame(AFrame: IAMQPFrame);
+
     procedure CloseConnection;
     procedure CloseAllChannels;
     procedure InternalDisconnect(ACloseConnection: Boolean);
@@ -493,6 +518,7 @@ type
     procedure Connect;
     procedure Disconnect;
     property MaxThread: Word read GetMaxThread write SetMaxThread;
+    property ChannelMaxThread: Word read GetChannelMaxThread write SetChannelMaxThread;
     property Host: String read GetHost write SetHost;
     property Port: Word read GetPort write SetPort;
     property VirtualHost: String read GetVirtualHost write SetVirtualHost;
@@ -504,14 +530,19 @@ type
     function OpenChannel: IAMQPChannel;
     property MaxSize: Integer read GetMaxSize write SetMaxSize;
     procedure CloseChannel(AChannel: IAMQPChannel);
+    property OnConnect: TNotifyEvent read FOnConnect write FOnConnect;
+    property OnDisconnect: TAMQPOnDisconnect read FOnDisconnect write FOnDisconnect;
+    property OnServerDisconnect: TAMQPOnServerDisconnect read FOnServerDisconnect write FOnServerDisconnect;
+    property OnChannelOpen: TAMQPOnChannelOpen read FOnChannelOpen write FOnChannelOpen;
     property OnChannelClose: TAMQPOnChannelClose read FOnChannelClose write FOnChannelClose;
     property OnChannelCloseServer: TAMQPOnChannelClose read FOnChannelCloseServer write FOnChannelCloseServer;
     property OnMessageException: TAMQPOnMessageException read FOnMessageException write FOnMessageException;
+    property OnProtocolError: TAMQPOnProtocolError read FOnProtocolError write FOnProtocolError;
   end;
 
 implementation
 
-uses IdGlobal, IdException, IdExceptionCore, IdStack, dateutils;
+uses IdGlobal, IdStack, dateutils;
 
 const
      cConsumerLock : TSEMbuf = (sem_num:0;sem_op:-1;sem_flg:0);
@@ -525,7 +556,7 @@ procedure DbgWriteln(AMsg: String);
 begin
  EnterCriticalsection(DbgLock);
  try
-  Writeln(AMsg);
+  Write(AMsg, #13#10);
  finally
   LeaveCriticalsection(DbgLock);
  end;
@@ -556,9 +587,11 @@ begin
 end;
 
 constructor TAMQPConsumer.TConsumeThread.Create(AConsumer: TAMQPConsumer;
-  AMessage: IAMQPMessage; ASemaphore: TAMQPSemaphore = -1);
+  AMessage: IAMQPMessage; AConsumerSemaphore: TAMQPSemaphore;
+  ASemaphore: TAMQPSemaphore);
 begin
   FSemaphore := ASemaphore;
+  FConsumerSemaphore := AConsumerSemaphore;
   FConsumer := AConsumer;
 
   FMessage := AMessage;
@@ -566,9 +599,14 @@ begin
   {$IfDef AMQP_DEBUG}
   DbgWriteln(ToString+'.Create:'+FConsumer.FConsumerThreadCount.ToString()+':'+FConsumer.ConsumerTag);
   {$EndIf}
+   if FConsumerSemaphore > -1 then
+     if semop(FConsumerSemaphore, @cConsumerLock, 1) = -1 then
+      RaiseLastOSError(GetLastOSError);
+
    if FSemaphore > -1 then
     if semop(FSemaphore, @cConsumerLock, 1) = -1 then
       RaiseLastOSError(GetLastOSError);
+
   FConsumer.DoIncStat;
   inherited Create(False);
 end;
@@ -586,6 +624,9 @@ begin
  except
    on E: Exception do ;
  end;
+ if FConsumerSemaphore > -1 then
+  if semop(FConsumerSemaphore, @cConsumerInlock, 1) = -1 then
+    RaiseLastOSError(GetLastOSError);
   if FSemaphore > -1 then
    if semop(FSemaphore, @cConsumerInlock, 1) = -1 then
      RaiseLastOSError(GetLastOSError);
@@ -763,7 +804,7 @@ begin
   for Consumer in FConsumers do
     if (Consumer.ConsumerTag = AConsumerTag) then
       raise AMQPException.Create('Duplicate consumer');
-  FConsumers.Add(TAMQPConsumer.Create(Self, AQueueName, AConsumerTag, AMessageHandler, AMessageQueue, FSemaphore ) );
+  FConsumers.Add(TAMQPConsumer.Create(Self, AQueueName, AConsumerTag, AMessageHandler, AMessageQueue, FSemaphore, FChannelMaxThread) );
 end;
 
 procedure TAMQPChannel.RemoveConsumer(AConsumerTag: String);
@@ -824,12 +865,14 @@ var
   HeaderFrame  : IAMQPFrame;
   BodyFrame    : IAMQPFrame;
   ContentHdr   : IAMQPContentHeader;
+  Msg          : TAMQPMessage;
   sz: Int64;
   bodySz: Int64;
 begin
   DeliverFrame := FDeliverQueue.Extract( FDeliverQueue[0] );
   HeaderFrame  := FDeliverQueue.Extract( FDeliverQueue[0] );
-  Result := TAMQPMessage.CreateBasicDeliver(DeliverFrame.AsMethod as IAMQPBasicDeliver);
+  Msg := TAMQPMessage.CreateBasicDeliver(DeliverFrame.AsMethod as IAMQPBasicDeliver);
+  Result := Msg;
   Result.Channel := Self;
   ContentHdr := HeaderFrame.AsContentHeader;
   Result.AssignFromContentHeader(ContentHdr);
@@ -1025,9 +1068,10 @@ begin
    FConnectionStat.DecConsumerCount;
 end;
 
-constructor TAMQPChannel.Create(AConnection: IAMQPConnection; AChannelId: Word; ASemaphore: TAMQPSemaphore);
+constructor TAMQPChannel.Create(AConnection: IAMQPConnection; AChannelId: Word; ASemaphore: TAMQPSemaphore; AChannelMaxThread: Word);
 begin
   FSemaphore := ASemaphore;
+  FChannelMaxThread := AChannelMaxThread;
   FConnection := AConnection;
   FConfirmSelect := False;
   FID := AChannelId;
@@ -1428,6 +1472,16 @@ end;
 
 { TAMQPConsumer }
 
+procedure TAMQPConsumer.WaitAllThreadEnd;
+begin
+  repeat
+   Sleep(10);
+   {$IfDef AMQP_DEBUG}
+    DbgWriteLn(ClassName + '.WaitAllThreadEnd:' +FConsumerThreadCount.ToString);
+   {$EndIf}
+  until FConsumerThreadCount = 0;
+end;
+
 procedure TAMQPConsumer.DoReceive(AChannel: IAMQPChannel; AMessage: IAMQPMessage; out SendAck: Boolean);
 //var SendAck: Boolean;
 begin
@@ -1447,12 +1501,14 @@ procedure TAMQPConsumer.DoIncStat;
 begin
   if FChannelStat <> nil then
    FChannelStat.IncConsumerThread;
+  InterLockedIncrement(FConsumerThreadCount);
 end;
 
 procedure TAMQPConsumer.DoDecStat;
 begin
   if FChannelStat <> nil then
    FChannelStat.DecConsumerThread;
+  InterLockedDecrement(FConsumerThreadCount);
 end;
 
 procedure TAMQPConsumer.Lock;
@@ -1468,14 +1524,16 @@ end;
 procedure TAMQPConsumer.Receive(AMessage: IAMQPMessage);
 begin
  try
-  TConsumeThread.Create(Self, AMessage, FSemaphore);
+  TConsumeThread.Create(Self, AMessage, FConsumerSemaphore, FSemaphore);
  finally
  end;
 end;
 
 constructor TAMQPConsumer.Create(AChannel: IAMQPChannel; AQueueName,
   AConsumerTag: String; AMessageHandler: TAMQPConsumerMethod;
-  AMessageQueue: TAMQPMessageQueue; ASemaphore: TAMQPSemaphore);
+  AMessageQueue: TAMQPMessageQueue; ASemaphore: TAMQPSemaphore;
+  AMaxThread: Word);
+var semArgs: TSEMun;
 begin
   FChannel := AChannel;
   FQueueName := AQueueName;
@@ -1483,27 +1541,38 @@ begin
   FMessageHandler := AMessageHandler;
   FMessageQueue := AMessageQueue;
   FSemaphore := ASemaphore;
+  FMaxThread := AMaxThread;
+  if FMaxThread > 0 then
+  begin
+   FConsumerSemaphore := semget(0, 1, 0666 or IPC_PRIVATE);;
+   semArgs.val := FMaxThread;
+   if semctl(FConsumerSemaphore, 0, SEM_SETVAL, semArgs) = -1 then
+    RaiseLastOSError(GetLastOSError);
+  end else
+   FConsumerSemaphore := -1;
+
   FLock := TCriticalSection.Create;
   if not Supports(FChannel,  IAMQPChannelStat, FChannelStat) then
    FChannelStat := nil;
 end;
 
 destructor TAMQPConsumer.Destroy;
+var SemArgs: TSEMun;
 begin
   Lock;
   try
-//   if FThread <> nil then
-//    begin
-//      FThread.WaitFor;
-//      FreeAndNil(FThread);
-//    end;
+   WaitAllThreadEnd;
    FChannelStat := nil;
    if FMessageQueue <> nil then
       FMessageQueue.Push(nil);
+   if FConsumerSemaphore > -1 then
+    begin
+      FillChar(SemArgs, sizeof(SemArgs), 0);
+      semctl(FConsumerSemaphore, 0, IPC_RMID, SemArgs);
+    end;
    {$IfDef AMQP_DEBUG}
     DbgWriteLn(ClassName+'.Destroy');
    {$EndIf}
-
   finally
    Unlock;
   end;
@@ -1793,6 +1862,11 @@ begin
   Result := FConsumerThreadCount;
 end;
 
+function TAMQPConnection.GetChannelMaxThread: Word;
+begin
+  Result := FChannelMaxThread;
+end;
+
 function TAMQPConnection.GetMaxSize: Integer;
 begin
   Result := FMaxSize;
@@ -1826,6 +1900,11 @@ end;
 function TAMQPConnection.GetVirtualHost: String;
 begin
  Result := FVirtualhost;
+end;
+
+procedure TAMQPConnection.SetChannelMaxThread(AValue: Word);
+begin
+  FChannelMaxThread := AValue;
 end;
 
 procedure TAMQPConnection.SetHost(AValue: String);
@@ -1941,6 +2020,12 @@ begin
    FOnChannelClose(Self, AChannel);
 end;
 
+procedure TAMQPConnection.DoOnChannelOpen(AChannel: IAMQPChannel);
+begin
+  if Assigned(FOnChannelOpen) then
+   FOnChannelOpen(Self, AChannel);
+end;
+
 procedure TAMQPConnection.DoOnChannelCloseServer(AChannel: IAMQPChannel);
 begin
   if Assigned(FOnChannelCloseServer) then
@@ -1954,6 +2039,31 @@ begin
    FOnMessageException(Self, AChannel, AMessage, AException)
   else
    raise AException;
+end;
+
+procedure TAMQPConnection.DoOnConnect;
+begin
+  if Assigned(FOnConnect) then
+   FOnConnect(Self);
+end;
+
+procedure TAMQPConnection.DoOnDisconnect;
+begin
+  if Assigned(FOnDisconnect) then
+   FOnDisconnect(Self);
+end;
+
+procedure TAMQPConnection.DoOnServerDisconnect(ACode: Word; AMessage: String);
+begin
+  if assigned(FOnServerDisconnect) then
+   FOnServerDisconnect(Self, ACode, AMessage);
+end;
+
+procedure TAMQPConnection.DoOnProtocolError(AMessage: String;
+  AFrame: IAMQPFrame; var AHandled: Boolean);
+begin
+  if Assigned(FOnProtocolError) then
+   FOnProtocolError(Self, AMessage, AFrame, AHandled);
 end;
 
 procedure TAMQPConnection.WriteFrame(AFrame: IAMQPFrame);
@@ -2041,6 +2151,7 @@ begin
     FTCP.Disconnect;
     FTCP.IOHandler.InputBuffer.Clear;
     FMainQueue.Clear;
+    DoOnDisconnect;
     {$ifdef AMQP_DEBUG}
     DbgWriteLn(ToString+'.InternalDisconnect:TCP.Disconnect:'+FTCP.Connected.ToString);
     {$EndIf}
@@ -2054,6 +2165,7 @@ end;
 procedure TAMQPConnection.ServerDisconnect(ACode: Integer; AMessage: String);
 begin
   FServerDisconnected := True;
+  DoOnServerDisconnect(ACode, AMessage);
   InternalDisconnect(False);
   {$IfDef AMQP_DEBUG}
   DbgWriteLn('Server disconnect code:'+ACode.ToString+' reason:'+AMessage);
@@ -2062,9 +2174,13 @@ end;
 
 procedure TAMQPConnection.ProtocolError(AErrorMessage: String;
   AFrame: IAMQPFrame);
+var Handled: Boolean;
 begin
+  Handled := False;
+  DoOnProtocolError(AErrorMessage, AFrame, Handled);
   InternalDisconnect(True);
-  raise AMQPException.Create(AErrorMessage);
+  if not Handled then
+    raise AMQPException.Create(AErrorMessage);
 end;
 
 function TAMQPConnection.MakeChannel: IAMQPChannel;
@@ -2092,7 +2208,7 @@ var
 begin
   Channels := FChannelList.LockList;
   try
-   Result := TAMQPChannel.Create(Self, GetNewChannelId(Channels), FSemaphore);
+   Result := TAMQPChannel.Create(Self, GetNewChannelId(Channels), FSemaphore, FChannelMaxThread);
    Channels.Add(Result);
   finally
     FChannelList.UnlockList;
@@ -2157,6 +2273,7 @@ begin
   FMaxSize := 131072;
   FSemaphore := semget(0, 1, 0666 or IPC_PRIVATE);
   FConsumerThreadCount := 0;
+  FChannelMaxThread := 2;
   SetMaxThread(10);
 end;
 
@@ -2205,6 +2322,7 @@ begin
   frame := ReadMethod([IAMQPMethodOpenOk]);
   FIsOpen := True;
   FServerDisconnected := False;
+  DoOnConnect;
 end;
 
 procedure TAMQPConnection.Disconnect;
@@ -2233,7 +2351,9 @@ begin
   Frame := Result.PopFrame;
   if not Supports(Frame.AsMethod, IAMQPChannelOpenOk) then
     ProtocolError(format('Expected channel.open-ok. Received class_id:%d, method_id: %d',
-     [Frame.AsContainer.class_id, Frame.AsContainer.method_id]), Frame);
+     [Frame.AsContainer.class_id, Frame.AsContainer.method_id]), Frame)
+  else
+    DoOnChannelOpen(Result);
 end;
 
 initialization
