@@ -33,6 +33,7 @@ type
    Procedure BasicNAck( ADeliveryTag: UInt64; ARequeue: Boolean = True; AMultiple: Boolean = False ); Overload;
    Procedure BasicAck( AMessage: IAMQPMessage; AMultiple: Boolean = False ); Overload;
    Procedure BasicAck( ADeliveryTag: UInt64; AMultiple: Boolean = False ); Overload;
+   procedure MessageException(AMessage: IAMQPMessage; AException: Exception);
   end;
 
   IAMQPMessage = interface
@@ -273,24 +274,26 @@ uses dateutils;
 procedure TAMQPMessage.AssignFromContentHeader(AContentHeader
   : IAMQPContentHeader);
 begin
-
-  weight := AContentHeader.weight;
-  BodySize := AContentHeader.BodySize;
-  propFlags := AContentHeader.propFlags;
-  contentType := AContentHeader.contentType;
-  contentEncoding := AContentHeader.contentEncoding;
-  headers.Assign(AContentHeader.headers);
-  deliveryMode := TAMQPDeliveryMode(AContentHeader.deliveryMode);
-  priority := AContentHeader.priority;
-  correlationId := AContentHeader.correlationId;
-  replyTo := AContentHeader.replyTo;
-  expiration := AContentHeader.expiration;
-  messageId := AContentHeader.messageId;
-  timestamp := UnixToDateTime(AContentHeader.timestamp);
-  &type := AContentHeader._type;
-  userId := AContentHeader.userId;
-  appId := AContentHeader.appId;
-  clusterId := AContentHeader.clusterId;
+  if AContentHeader <> nil then
+    begin
+      weight := AContentHeader.weight;
+      BodySize := AContentHeader.BodySize;
+      propFlags := AContentHeader.propFlags;
+      contentType := AContentHeader.contentType;
+      contentEncoding := AContentHeader.contentEncoding;
+      headers.Assign(AContentHeader.headers);
+      deliveryMode := TAMQPDeliveryMode(AContentHeader.deliveryMode);
+      priority := AContentHeader.priority;
+      correlationId := AContentHeader.correlationId;
+      replyTo := AContentHeader.replyTo;
+      expiration := AContentHeader.expiration;
+      messageId := AContentHeader.messageId;
+      timestamp := UnixToDateTime(AContentHeader.timestamp);
+      &type := AContentHeader._type;
+      userId := AContentHeader.userId;
+      appId := AContentHeader.appId;
+      clusterId := AContentHeader.clusterId;
+    end;
 end;
 
 procedure TAMQPMessage.Assign(ASource: IAMQPMessage);
@@ -422,14 +425,30 @@ end;
 
 procedure TAMQPMessage.Ack;
 begin
+ try
   if FChannel <> nil then
      FChannel.BasicAck(DeliveryTag, False);
+ except
+   on e: exception do
+    if FChannel <> nil then
+      FChannel.MessageException(Self, E)
+    else
+      raise;
+ end;
 end;
 
 procedure TAMQPMessage.NoAck(ARequeue: Boolean);
 begin
-  if FChannel <> nil then
-    FChannel.BasicNAck(FDeliveryTag);
+  try
+   if FChannel <> nil then
+     FChannel.BasicNAck(FDeliveryTag);
+  except
+    on e: exception do
+     if FChannel <> nil then
+       FChannel.MessageException(Self, E)
+     else
+       raise;
+  end;
 end;
 
 procedure TAMQPMessage.SetBodySize(const Value: UInt64);
