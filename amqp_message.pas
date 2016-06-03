@@ -6,134 +6,9 @@ unit amqp_message;
 interface
 
 uses
-    Classes, SysUtils, amqp_types, IdGlobal;
+    Classes, SysUtils, amqp_types, IdGlobal, ampq_intf;
 
 type
-{$ifdef fpc}
-  TAMQPBody = array of Byte;
-{$else}
-  TIdAMQPBody = TBytes;
-{$endif}
-
-  TAMQPDeliveryMode = (dmNone, dmNonPersistent, dmPersistent);
-
-  { IAMQPMessage }
-
-  IAMQPMessage = interface;
-
-  { IAMQPChannelAck }
-
-  IAMQPChannelAck = interface
-  ['{CCB65C30-7D07-4929-9EE0-18620AC259BB}']
-   function GetChannelId: Word;
-   property ChannelId: Word read GetChannelId;
-   Procedure BasicReject( AMessage: IAMQPMessage; ARequeue: Boolean = True ); overload;
-   Procedure BasicReject( ADeliveryTag: UInt64; ARequeue: Boolean = True ); overload;
-   procedure BasicNAck( AMessage: IAMQPMessage; ARequeue: Boolean = True;  AMultiple: Boolean = False ); Overload;
-   Procedure BasicNAck( ADeliveryTag: UInt64; ARequeue: Boolean = True; AMultiple: Boolean = False ); Overload;
-   Procedure BasicAck( AMessage: IAMQPMessage; AMultiple: Boolean = False ); Overload;
-   Procedure BasicAck( ADeliveryTag: UInt64; AMultiple: Boolean = False ); Overload;
-   Procedure MessageException(AMessage: IAMQPMessage; AException: Exception);
-  end;
-
-  IAMQPMessage = interface
-  ['{23A8D576-7FE7-4393-87C3-B078CB987DF7}']
-    function GetAppId: AnsiString;
-    function GetBody: TIdBytes;
-    function GetBodyAsString: AnsiString;
-    function GetBodySize: UInt64;
-    function GetChannel: IAMQPChannelAck;
-    function GetClusterId: AnsiString;
-    function GetContentEncoding: AnsiString;
-    function GetContentType: AnsiString;
-    function GetCorrelationId: AnsiString;
-    function GetDeliveryMode: TAMQPDeliveryMode;
-    function GetDeliveryTag: UInt64;
-    function GetExchange: AnsiString;
-    function GetExpiration: AnsiString;
-    function GetHdrAsBoolean(AName: AnsiString): Boolean;
-    function GetHdrAsNumber(AName: AnsiString): Double;
-    function GetHdrAsString(AName: AnsiString): AnsiString;
-    function Getheaders: IAMQPHeaders;
-    function GetMessageCount: Integer;
-    function GetMessageId: AnsiString;
-    function GetPriority: Byte;
-    function GetpropFlags: Word;
-    function GetRedelivered: Boolean;
-    function GetReplyTo: AnsiString;
-    function GetRoutingKey: AnsiString;
-    function GetTimestamp: TDateTime;
-    function GetType: AnsiString;
-    function GetUserId: AnsiString;
-    function GetWeight: Word;
-    procedure SetAppId(AValue: AnsiString);
-    procedure SetBodyAsString(AValue: AnsiString);
-    procedure SetBodySize(const Value: UInt64);
-    procedure SetChannel(AValue: IAMQPChannelAck);
-    procedure SetClusterId(AValue: AnsiString);
-    procedure SetContentEncoding(AValue: AnsiString);
-    procedure SetContentType(AValue: AnsiString);
-    procedure SetCorrelationId(AValue: AnsiString);
-    procedure SetDeliveryMode(AValue: TAMQPDeliveryMode);
-    procedure SetExchange(AValue: AnsiString);
-    procedure SetExpiration(AValue: AnsiString);
-    procedure SetHdrAsBoolean(AName: AnsiString; AValue: Boolean);
-    procedure SetHdrAsNumber(AName: AnsiString; AValue: Double);
-    procedure SetHdrAsString(AName: AnsiString; AValue: AnsiString);
-    procedure SetHeaders(AValue: IAMQPHeaders);
-    procedure SetMessageId(AValue: AnsiString);
-    procedure SetPriority(AValue: Byte);
-    procedure SetpropFlags(AValue: Word);
-    procedure SetReplyTo(AValue: AnsiString);
-    procedure SetRoutingKey(AValue: AnsiString);
-    procedure SetTimestamp(AValue: TDateTime);
-    procedure SetType(AValue: AnsiString);
-    procedure SetUserId(AValue: AnsiString);
-    procedure SetWeight(AValue: Word);
-    procedure AssignFromContentHeader(AContentHeader: IAMQPContentHeader);
-    procedure Assign(ASource: IAMQPMessage);
-    procedure LoadBody(ABody: IAMQPContentBody);
-    procedure LoadBodyFromStream(AStream: TStream; ASize: Int64);
-    procedure LoadBodyFromString(AValue: AnsiString);
-    procedure SaveBodyToStream(AStream: TStream);
-    procedure SaveBodyToFile(AFileName: AnsiString);
-    procedure AddHeaderString(AName, AValue: AnsiString);
-    procedure AddHeaderBoolean(AName: AnsiString; AValue: Boolean);
-    procedure AddHeaderNumber(AName: AnsiString; AValue: Double);
-    procedure DeleteHeader(AName: AnsiString);
-    procedure BodyFromBytes(ABytes: TBytes);
-    procedure Ack;
-    procedure NoAck(ARequeue: Boolean = True);
-
-    property DeliveryTag: UInt64 read GetDeliveryTag;
-    property Redelivered: Boolean read GetRedelivered;
-    property Exchange: AnsiString read GetExchange write SetExchange;
-    property RoutingKey: AnsiString read GetRoutingKey write SetRoutingKey;
-    property MessageCount: Integer read GetMessageCount;
-    property weight: Word read GetWeight write SetWeight;
-    property BodySize: UInt64 read GetBodySize write SetBodySize;
-    property propFlags: Word read GetpropFlags write SetpropFlags;
-    property contentType: AnsiString read GetContentType write SetContentType;
-    property contentEncoding: AnsiString read GetContentEncoding write SetContentEncoding;
-    property headers: IAMQPHeaders read Getheaders write SetHeaders;
-    property deliveryMode: TAMQPDeliveryMode read GetDeliveryMode write SetDeliveryMode;
-    property priority: Byte read GetPriority write SetPriority;
-    property correlationId: AnsiString read GetCorrelationId write SetCorrelationId;
-    property replyTo: AnsiString read GetReplyTo write SetReplyTo;
-    property expiration: AnsiString read GetExpiration write SetExpiration;
-    property messageId: AnsiString read GetMessageId write SetMessageId;
-    property timestamp: TDateTime read GetTimestamp write SetTimestamp;
-    property &type: AnsiString read GetType write SetType;
-    property userId: AnsiString read GetUserId write SetUserId;
-    property appId: AnsiString read GetAppId write SetAppId;
-    property clusterId: AnsiString read GetClusterId write SetClusterId;
-    property Body: TIdBytes read GetBody;
-    property BodyAsString: AnsiString read GetBodyAsString write SetBodyAsString;
-    property HdrAsString[AName: AnsiString]: AnsiString read GetHdrAsString write SetHdrAsString;
-    property HdrAsBoolean[AName: AnsiString]: Boolean read GetHdrAsBoolean write SetHdrAsBoolean;
-    property HdrAsNumber[AName: AnsiString]: Double read GetHdrAsNumber write SetHdrAsNumber;
-    property Channel: IAMQPChannelAck read GetChannel write SetChannel;
-  end;
   { TAMQPMessage }
 
   TAMQPMessage = class(TInterfacedObject, IAMQPMessage)
@@ -166,6 +41,9 @@ type
     function GetAppId: AnsiString;
     function GetBody: TIdBytes;
     function GetBodyAsString: AnsiString;
+{$IfDef FPC}
+    function GetBodyHash: String;
+{$EndIf}
     function GetBodySize: UInt64;
     function GetChannel: IAMQPChannelAck;
     function GetClusterId: AnsiString;
@@ -264,12 +142,20 @@ type
     property HdrAsString[AName: AnsiString]: AnsiString read GetHdrAsString write SetHdrAsString;
     property HdrAsBoolean[AName: AnsiString]: Boolean read GetHdrAsBoolean write SetHdrAsBoolean;
     property HdrAsNumber[AName: AnsiString]: Double read GetHdrAsNumber write SetHdrAsNumber;
+{$IfDef FPC}
+    property BodyHash: String read GetBodyHash;
+{$EndIf}
   end;
 
 
 implementation
 
-uses dateutils;
+uses
+  dateutils
+{$IfDef FPC}
+  , sha1
+{$EndIf}
+  ;
 
 procedure TAMQPMessage.AssignFromContentHeader(AContentHeader
   : IAMQPContentHeader);
@@ -585,6 +471,13 @@ begin
   SetLength(Result, Length(FBody));
   Move(FBody[0], Result[1], Length(FBody));
 end;
+
+{$IfDef FPC}
+function TAMQPMessage.GetBodyHash: String;
+begin
+  Result := SHA1Print(SHA1Buffer(FBody[0], FBodySize));
+end;
+{$EndIf}
 
 function TAMQPMessage.GetAppId: AnsiString;
 begin

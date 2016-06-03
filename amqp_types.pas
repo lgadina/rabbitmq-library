@@ -6,7 +6,18 @@ unit amqp_types;
 {$endif}
 interface
 
-uses classes, contnrs;
+uses
+    classes
+  , sysutils
+  , contnrs
+{$IfDef FPC}
+  , ctypes
+{$Else}
+  , Windows
+  , SyncObjs
+  , System.Generics.Collections
+{$EndIf}
+  ;
 
 const
   AMQP_FRAME_EMPTY = 0;
@@ -19,14 +30,36 @@ const
   AMQP_FRAME_HEADER_SIZE = 7;
 
 type
+  EBlockedQueueException = class(Exception);
+  EBlockedQueueTimeout = class(EBlockedQueueException);
+  AMQPException = class(Exception);
+
   TAMQPExchangeType = ( etDirect, etTopic, etFanout, etHeaders );
+ {$ifdef fpc}
+  TAMQPBody = array of Byte;
+ {$else}
+  TAMQPBody = TBytes;
+ {$endif}
+  TAMQPDeliveryMode = (dmNone, dmNonPersistent, dmPersistent);
 
 Const
   AMQPExchangeTypeStr : Array[TAMQPExchangeType] of string = ( 'direct', 'topic', 'fanout', 'headers' );
 
 type
-  amqp_octet = byte;
+{$IfDef FPC}
+  TAMQPSemaphore = cint;
+{$Else}
+  TAMQPSemaphore = TSemaphore;
+{$EndIf}
+const
+{$IfDef FPC}
+  NullSemaphore: TAMQPSemaphore = -1;
+{$Else}
+  NullSemaphore: TAMQPSemaphore = nil;
+{$EndIf}
 
+type
+  amqp_octet = byte;
   amqp_2octet = word;
   amqp_4octet = LongWord;
   amqp_8octet = UInt64;
@@ -83,9 +116,9 @@ type
   TAMQPInterfacedObject = class(TObject, IUnknown)
   protected
      frefcount : longint;
-     function QueryInterface(constref iid : tguid;out obj) : longint; virtual; cdecl;
-     function _AddRef : longint;cdecl;
-     function _Release : longint;cdecl;
+     function QueryInterface({$IfDef FPC}constref{$Else}Const{$EndIf} iid : tguid; out obj) : longint; virtual; {$IfDef FPC}cdecl{$Else}stdcall{$EndIf};
+     function _AddRef : longint;{$IfDef FPC}cdecl{$Else}stdcall{$EndIf};
+     function _Release : longint;{$IfDef FPC}cdecl{$Else}stdcall{$EndIf};
    public
      procedure AfterConstruction;override;
      procedure BeforeDestruction;override;
@@ -1584,11 +1617,32 @@ type
     procedure Setexchange(const Value: AnsiString);
     property exchange: AnsiString read Getexchange write Setexchange;
     property _type: AnsiString read Get_type write Set_type;
+{$IfDef FPC}
+{$Else}
+    function getPassive: amqp_bit;
+    procedure setPassive(const Value: amqp_bit);
+    function getDurable: amqp_bit;
+    procedure setDurable(const Value: amqp_bit);
+    function getAutoDelete: amqp_bit;
+    procedure setAutoDelete(const Value: amqp_bit);
+    function getInternal: amqp_bit;
+    procedure setInternal(const Value: amqp_bit);
+    function getNoWait: amqp_bit;
+    procedure setNoWait(const Value: amqp_bit);
+{$EndIf}
+{$IfDef FPC}
     property passive: amqp_bit index 1 read getFlag write SetFlag;
     property durable: amqp_bit index 2 read getFlag write SetFlag;
     property auto_delete: amqp_bit index 3 read getFlag write SetFlag;
     property internal: amqp_bit index 4 read getFlag write SetFlag;
     property nowait: amqp_bit index 5 read getFlag write SetFlag;
+{$Else}
+    property passive: amqp_bit read getPassive write SetPassive;
+    property durable: amqp_bit read getDurable write SetDurable;
+    property auto_delete: amqp_bit read getAutoDelete write SetAutoDelete;
+    property internal: amqp_bit read getInternal write SetInternal;
+    property nowait: amqp_bit read getNoWait write SetNoWait;
+{$EndIf}
     property arguments: IAMQPProperties read Getarguments write Setarguments;
   end;
 
@@ -1612,6 +1666,16 @@ type
     procedure DoWrite(AStream: TStream); override;
     procedure DoRead(AStream: TStream); override;
     function GetSize: amqp_long_long_uint; override;
+    function getPassive: amqp_bit;
+    procedure setPassive(const Value: amqp_bit);
+    function getDurable: amqp_bit;
+    procedure setDurable(const Value: amqp_bit);
+    function getAutoDelete: amqp_bit;
+    procedure setAutoDelete(const Value: amqp_bit);
+    function getInternal: amqp_bit;
+    procedure setInternal(const Value: amqp_bit);
+    function getNoWait: amqp_bit;
+    procedure setNoWait(const Value: amqp_bit);
   public
     constructor Create(AName: String = ''); override;
     destructor Destroy; override;
@@ -1654,10 +1718,16 @@ type
     function Getexchange: AnsiString;
     procedure Setexchange(const Value: AnsiString);
     procedure Setticket(AValue: amqp_short_uint);
+    {$IfNDef FPC}
+    function GetIfUnused: amqp_bit;
+    procedure SetIfUnused(const Value: amqp_bit);
+    function GetNoWait: amqp_bit;
+    procedure SetNoWait(const Value: amqp_bit);
+    {$EndIf}
     property ticket: amqp_short_uint read Getticket write Setticket;
     property exchange: AnsiString read Getexchange write Setexchange;
-    property if_unused: amqp_bit index 1 read getFlag write SetFlag;
-    property no_wait: amqp_bit index 2 read getFlag write SetFlag;
+    property if_unused: amqp_bit {$IfDef FPC}index 1 read getFlag write SetFlag{$Else} read GetIfUnused write SetIfUnused{$EndIf};
+    property no_wait: amqp_bit {$IfDef FPC}index 2 read getFlag write SetFlag{$Else} read GetNoWait write SetNoWait{$EndIf};
   end;
 
   { amqp_method_exchange_delete }
@@ -1677,6 +1747,10 @@ type
     procedure DoWrite(AStream: TStream); override;
     procedure DoRead(AStream: TStream); override;
     function GetSize: amqp_long_long_uint; override;
+    function GetIfUnused: amqp_bit;
+    procedure SetIfUnused(const Value: amqp_bit);
+    function GetNoWait: amqp_bit;
+    procedure SetNoWait(const Value: amqp_bit);
   public
     constructor Create(AName: String = ''); override;
     destructor Destroy; override;
@@ -1822,13 +1896,34 @@ type
     function Getqueue: AnsiString;
     procedure Setqueue(const Value: AnsiString);
     procedure Setticket(AValue: amqp_short_uint);
+{$IfDef FPC}
+{$Else}
+    function getPassive: amqp_bit;
+    procedure setPassive(const Value: amqp_bit);
+    function getDurable: amqp_bit;
+    procedure setDurable(const Value: amqp_bit);
+    function getAutoDelete: amqp_bit;
+    procedure setAutoDelete(const Value: amqp_bit);
+    function getExclusive: amqp_bit;
+    procedure setExclusive(const Value: amqp_bit);
+    function getNoWait: amqp_bit;
+    procedure setNoWait(const Value: amqp_bit);
+{$EndIf}
     property ticket: amqp_short_uint read Getticket write Setticket;
     property queue: AnsiString read Getqueue write Setqueue;
+{$IfDef FPC}
     property passive: amqp_bit index 1 read getFlag write SetFlag;
     property durable: amqp_bit index 2 read getFlag write SetFlag;
     property exclusive: amqp_bit index 3 read getFlag write SetFlag;
     property auto_delete: amqp_bit index 4 read getFlag write SetFlag;
     property no_wait: amqp_bit index 5 read getFlag write SetFlag;
+{$Else}
+    property passive: amqp_bit read getPassive write SetPassive;
+    property durable: amqp_bit read getDurable write SetDurable;
+    property exclusive: amqp_bit read getExclusive write SetExclusive;
+    property auto_delete: amqp_bit read getAutoDelete write SetAutoDelete;
+    property no_wait: amqp_bit read getNoWait write SetNoWait;
+{$EndIf}
     property arguments: IAMQPProperties read Getarguments write Setarguments;
   end;
 
@@ -1852,6 +1947,17 @@ type
     procedure DoWrite(AStream: TStream); override;
     procedure DoRead(AStream: TStream); override;
     function GetSize: amqp_long_long_uint; override;
+    function getPassive: amqp_bit;
+    procedure setPassive(const Value: amqp_bit);
+    function getDurable: amqp_bit;
+    procedure setDurable(const Value: amqp_bit);
+    function getAutoDelete: amqp_bit;
+    procedure setAutoDelete(const Value: amqp_bit);
+    function getExclusive: amqp_bit;
+    procedure setExclusive(const Value: amqp_bit);
+    function getNoWait: amqp_bit;
+    procedure setNoWait(const Value: amqp_bit);
+
   public
     constructor Create(AName: String = ''); override;
     destructor Destroy; override;
@@ -2107,12 +2213,25 @@ type
     function Getqueue: AnsiString;
     procedure Setqueue(const Value: AnsiString);
     procedure Setticket(AValue: amqp_short_uint);
-
+    {$IfNDef FPC}
+    function GetIfUnused: amqp_bit;
+    procedure SetIfUnused(const Value: amqp_bit);
+    function GetIfEmpty: amqp_bit;
+    procedure SetIfEmpty(const Value: amqp_bit);
+    function GetNoWait: amqp_bit;
+    procedure SetNoWait(const Value: amqp_bit);
+    {$EndIf}
     property ticket: amqp_short_uint read Getticket write Setticket;
     property queue: AnsiString read Getqueue write Setqueue;
+    {$IfDef FPC}
     property ifUnused: amqp_bit index 1 read getFlag write SetFlag;
     property ifempty: amqp_bit index 2 read getFlag write SetFlag;
     property no_wait: amqp_bit index 3 read getFlag write SetFlag;
+    {$Else}
+    property ifUnused: amqp_bit read GetIfUnused write SetIfUnused;
+    property ifempty: amqp_bit read GetIfEmpty write SetIfEmpty;
+    property no_wait: amqp_bit read GetNoWait write SetNoWait;
+    {$EndIf}
   end;
 
   { amqp_method_queue_delete }
@@ -2132,6 +2251,12 @@ type
     procedure DoWrite(AStream: TStream); override;
     procedure DoRead(AStream: TStream); override;
     function GetSize: amqp_long_long_uint; override;
+    function GetIfUnused: amqp_bit;
+    procedure SetIfUnused(const Value: amqp_bit);
+    function GetIfEmpty: amqp_bit;
+    procedure SetIfEmpty(const Value: amqp_bit);
+    function GetNoWait: amqp_bit;
+    procedure SetNoWait(const Value: amqp_bit);
   public
     constructor Create(AName: String = ''); override;
     destructor Destroy; override;
@@ -2290,10 +2415,25 @@ type
     procedure Setticket(AValue: amqp_short_uint);
     property ticket: amqp_short_uint read Getticket write Setticket;
     property queue: AnsiString read Getqueue write Setqueue;
+    {$IfDef FPC}
     property noLocal: amqp_bit index 1 read getFlag write SetFlag;
     property noAck: amqp_bit index 2 read getFlag write SetFlag;
     property exclusive: amqp_bit index 3 read getFlag write SetFlag;
-    property nowait: amqp_bit index 1 read getFlag write SetFlag;
+    property nowait: amqp_bit index 4 read getFlag write SetFlag;
+    {$Else}
+    function getNoLocal: amqp_bit;
+    function getNoAck: amqp_bit;
+    function getExclusive: amqp_bit;
+    function getNoWait:  amqp_bit;
+    procedure setNoLocal(const Value: amqp_bit);
+    procedure setNoAck(const Value: amqp_bit);
+    procedure setExclusive(const Value: amqp_bit);
+    procedure setNoWait(const Value: amqp_bit);
+    property noLocal: amqp_bit read getNoLocal write setNoLocal;
+    property noAck: amqp_bit read getNoAck write setNoAck;
+    property exclusive: amqp_bit read getExclusive write setExclusive;
+    property nowait: amqp_bit read getNoWait write setNoWait;
+    {$EndIf}
     property arguments: IAMQPProperties read Getarguments write Setarguments;
   end;
 
@@ -2315,6 +2455,14 @@ type
     procedure DoWrite(AStream: TStream); override;
     procedure DoRead(AStream: TStream); override;
     function GetSize: amqp_long_long_uint; override;
+    function getNoLocal: amqp_bit;
+    function getNoAck: amqp_bit;
+    function getExclusive: amqp_bit;
+    function getNoWait:  amqp_bit;
+    procedure setNoLocal(const Value: amqp_bit);
+    procedure setNoAck(const Value: amqp_bit);
+    procedure setExclusive(const Value: amqp_bit);
+    procedure setNoWait(const Value: amqp_bit);
   public
     constructor Create(AName: String = ''); override;
     destructor Destroy; override;
@@ -2323,7 +2471,7 @@ type
     property noLocal: amqp_bit index 1 read getFlag write SetFlag;
     property noAck: amqp_bit index 2 read getFlag write SetFlag;
     property exclusive: amqp_bit index 3 read getFlag write SetFlag;
-    property nowait: amqp_bit index 1 read getFlag write SetFlag;
+    property nowait: amqp_bit index 4 read getFlag write SetFlag;
     property arguments: IAMQPProperties read Getarguments write Setarguments;
     class function method_id: amqp_short_uint; override;
     class function create_frame(achannel: amqp_short_uint;
@@ -2412,8 +2560,17 @@ type
     procedure Setticket(AValue: amqp_short_uint);
 
     property ticket: amqp_short_uint read Getticket write Setticket;
+   {$IfDef FPC}
     property mandatory: amqp_bit index 1 read getFlag write SetFlag;
     property immediate: amqp_bit index 2 read getFlag write SetFlag;
+   {$Else}
+    function GetMandatory: amqp_bit;
+    function GetImmediate: amqp_bit;
+    procedure SetMandatory(const Value: amqp_bit);
+    procedure SetImmediate(const Value: amqp_bit);
+    property mandatory: amqp_bit read getMandatory write SetMandatory;
+    property immediate: amqp_bit read getImmediate write SetImmediate;
+   {$EndIf}
   end;
 
   { amqp_method_basic_publish }
@@ -2430,6 +2587,11 @@ type
     procedure DoWrite(AStream: TStream); override;
     procedure DoRead(AStream: TStream); override;
     function GetSize: amqp_long_long_uint; override;
+    function GetMandatory: amqp_bit;
+    function GetImmediate: amqp_bit;
+    procedure SetMandatory(const Value: amqp_bit);
+    procedure SetImmediate(const Value: amqp_bit);
+
   public
     constructor Create(AName: String = ''); override;
     destructor Destroy; override;
@@ -2852,7 +3014,9 @@ type
     function getFlag(const Index: Integer): amqp_bit;
     procedure setFlag(const Index: Integer; const Value: amqp_bit);
     property deliveryTag: amqp_delivery_tag read GetdeliveryTag write SetdeliveryTag;
-    property mulitple: amqp_bit index 1 read getFlag write setFlag;
+    function getMulitple: amqp_bit;
+    procedure setMulitple(const Value: amqp_bit);
+    property mulitple: amqp_bit read getMulitple write setMulitple;
   end;
 
   { amqp_method_basic_ack }
@@ -2869,6 +3033,8 @@ type
     procedure DoWrite(AStream: TStream); override;
     procedure DoRead(AStream: TStream); override;
     function GetSize: amqp_long_long_uint; override;
+    function getMulitple: amqp_bit;
+    procedure setMulitple(const Value: amqp_bit);
   public
     property deliveryTag: amqp_delivery_tag read GetdeliveryTag write SetdeliveryTag;
     property mulitple: amqp_bit index 1 read getFlag write setFlag;
@@ -2934,13 +3100,17 @@ type
 
   IAMQPBasicNAck = interface(IAMQPBasicAck)
   ['{DE3174AF-102A-45CB-B519-0CF87C610783}']
-   property requeue: amqp_bit index 2 read getFlag write setFlag;
+   function getRequeue: amqp_bit;
+   procedure setRequeue(const Value: amqp_bit);
+   property requeue: amqp_bit read getRequeue write setRequeue;
   end;
 
   amqp_method_basic_nack = class(amqp_method_basic_ack, IAMQPBasicNAck)
   protected
     function getFlag(const Index: Integer): amqp_bit; override;
     procedure setFlag(const Index: Integer; const Value: amqp_bit); override;
+    function getRequeue: amqp_bit;
+    procedure setRequeue(const Value: amqp_bit);
   public
     property requeue: amqp_bit index 2 read getFlag write setFlag;
     class function method_id: amqp_short_uint; override;
@@ -3037,7 +3207,9 @@ type
   ['{14529E63-2225-45DD-B7E1-E0815ED02CA6}']
     function getFlag(const Index: Integer): amqp_bit;
     procedure SetFlag(const Index: Integer; const Value: amqp_bit);
-    property nowait: amqp_bit index 1 read getFlag write SetFlag;
+    function getNoWait: amqp_bit;
+    procedure setNoWait(const Value: amqp_bit);
+    property nowait: amqp_bit read getNoWait write setNoWait;
   end;
 
   { amqp_method_confirm_select }
@@ -3051,6 +3223,8 @@ type
     procedure DoWrite(AStream: TStream); override;
     procedure DoRead(AStream: TStream); override;
     function GetSize: amqp_long_long_uint; override;
+    function getNoWait: amqp_bit;
+    procedure setNoWait(const Value: amqp_bit);
   public
     property nowait: amqp_bit index 1 read getFlag write SetFlag;
     class function method_id: amqp_short_uint; override;
@@ -3093,7 +3267,7 @@ function new_amqp_protocol(AProtocolIdMajor, AProtocolIdMinor, AVersionMajor,
 
 implementation
 
-uses sysutils, variants, amqp_message;
+uses variants, amqp_message;
 
 var
   famqp_method_factory: TStringList = nil;
@@ -3114,6 +3288,7 @@ const
   AMQP_BASIC_APP_ID_FLAG = (1 shl 3);
   AMQP_BASIC_CLUSTER_ID_FLAG = (1 shl 2);
 
+
 type
 
   { TAMQPDebugObject }
@@ -3128,11 +3303,17 @@ type
   end;
 
   { TAMQPDebugObjectList }
-
+{$IfDef FPC}
   TAMQPDebugObjectList = class(TFPObjectHashTable)
+{$Else}
+  TAMQPDebugObjectList = class(TDictionary<String,TAMQPDebugObject>)
+{$EndIf}
   private
     function GetItems(const index: string): TAMQPDebugObject;
   protected
+{$IfNDef FPC}
+    procedure Iterate;
+{$EndIf}
     Procedure DoIterate(Item: TObject; const Key: string; var Continue: Boolean);
   public
     destructor Destroy; override;
@@ -3149,6 +3330,7 @@ begin
    FDebugList :=TAMQPDebugObjectList.Create;
  Result := FDebugList;
 end;
+
 
 function SetBit(AByte: amqp_octet; ABit: amqp_octet; AState: Boolean)
   : amqp_octet;
@@ -3191,10 +3373,26 @@ begin
 
 end;
 
+
 function TAMQPDebugObjectList.GetItems(const index: string): TAMQPDebugObject;
 begin
   Result := TAMQPDebugObject(inherited Items[Index]);
 end;
+
+{$IfNDef FPC}
+procedure TAMQPDebugObjectList.Iterate;
+var Obj: TPair<String,TAMQPDebugObject>;
+    Cont: Boolean;
+begin
+ for Obj in Self do
+ begin
+  Cont := True;
+  DoIterate(Obj.Value, Obj.Key, Cont);
+  if not Cont then
+    Break;
+ end;
+end;
+{$EndIf}
 
 procedure TAMQPDebugObjectList.DoIterate(Item: TObject; const Key: string;
   var Continue: Boolean);
@@ -3207,7 +3405,11 @@ end;
 
 destructor TAMQPDebugObjectList.Destroy;
 begin
+{$IfDef FPC}
   Iterate(DoIterate);
+{$Else}
+  Iterate;
+{$EndIf};
   inherited Destroy;
 end;
 
@@ -3220,10 +3422,11 @@ begin
   inherited Add(AKey, Item);
 end;
 
+
 { TAMQPInterfacedObject }
 
-function TAMQPInterfacedObject.QueryInterface(constref iid: tguid;
-  out obj): longint; cdecl;
+function TAMQPInterfacedObject.QueryInterface({$IfDef FPC}constref{$Else}Const{$EndIf} iid: tguid;
+  out obj): longint; {$IfDef FPC}cdecl{$Else}StdCall{$EndIf};
 begin
   if getinterface(iid,obj) then
     result:=S_OK
@@ -3231,18 +3434,20 @@ begin
     result:=longint(E_NOINTERFACE);
 end;
 
-function TAMQPInterfacedObject._AddRef: longint; cdecl;
+
+function TAMQPInterfacedObject._AddRef: longint; {$IfDef FPC}cdecl{$Else}StdCall{$EndIf};
 begin
   _addref:=interlockedincrement(frefcount);
 end;
 
-function TAMQPInterfacedObject._Release: longint; cdecl;
+function TAMQPInterfacedObject._Release: longint; {$IfDef FPC}cdecl{$Else}StdCall{$EndIf};
 begin
  _Release:=interlockeddecrement(frefcount);
  if _Release=0 then
    self.destroy;
 end;
 
+{$IfDef FPC}
 function declocked(var l : longint) : boolean;assembler; nostackframe;
   asm
 {$ifdef FPC_PIC}
@@ -3263,11 +3468,16 @@ function declocked(var l : longint) : boolean;assembler; nostackframe;
 .Ldeclockedend:
      setzb      %al
   end;
+{$EndIf}
 
 
 procedure TAMQPInterfacedObject.AfterConstruction;
 begin
+{$IfDef FPC}
   declocked(frefcount);
+{$Else}
+  InterlockedDecrement(frefcount);
+{$EndIf}
 end;
 
 procedure TAMQPInterfacedObject.BeforeDestruction;
@@ -3297,10 +3507,20 @@ begin
  Result := GetBit(FFlags, Index - 1);
 end;
 
+function amqp_method_confirm_select.getNoWait: amqp_bit;
+begin
+  Result := GetFlag(1);
+end;
+
 procedure amqp_method_confirm_select.SetFlag(const Index: Integer;
   const Value: amqp_bit);
 begin
   SetBit(FFlags, Index - 1, Value);
+end;
+
+procedure amqp_method_confirm_select.setNoWait(const Value: amqp_bit);
+begin
+  SetFlag(1, Value);
 end;
 
 procedure amqp_method_confirm_select.DoWrite(AStream: TStream);
@@ -3942,25 +4162,33 @@ end;
 { amqp_object }
 
 constructor amqp_object.Create(AName: String = '');
+{$IfDef FPC}
 var dObj: TAMQPDebugObject;
+{$EndIf}
 begin
   FName := AName;
   if FName = '' then
     FName := ClassName;
+{$IfDef FPC}
   dObj := DebugList.Items[FName];
   if dObj = nil then
     DebugList.Add(FName, amqp_object_class(Self.ClassType))
   else
    dObj.count := dObj.count + 1;
+{$EndIf}
 end;
 
 destructor amqp_object.Destroy;
+{$IfDef FPC}
 var dObj: TAMQPDebugObject;
+{$EndIf}
 begin
 //  WriteLn(ClassName,'.Create');
+{$IfDef FPC}
   dObj := DebugList.Items[FName];
   if dObj <> nil then
    dObj.count := dObj.count - 1;
+{$EndIf}
   inherited Destroy;
 end;
 
@@ -5272,7 +5500,7 @@ end;
 
 function amqp_frame.GetAsDebugString: String;
 begin
-  Result := 'Channel:' + fchannel.ToString+':'+ClassName;
+  Result := 'Channel:' + {$IfDef FPC}fchannel.ToString{$Else}IntToStr(fchannel){$EndIf}+':'+ClassName;
   if fpayload <> nil then
     Result := Result + '.' + fpayload.AsDebugString;
 end;
@@ -6045,7 +6273,7 @@ end;
 
 function amqp_method_close.GetAsDebugString: String;
 begin
-  Result := inherited GetAsDebugString +':ReplyCode:'+fReplyCode.ToString+':ReplyText:'+fReplyText.val;
+  Result := inherited GetAsDebugString +':ReplyCode:'+{$IfDef FPC}fReplyCode.ToString{$Else}IntToStr(fReplyCode){$EndIf}+':ReplyText:'+fReplyText.val;
 end;
 
 class function amqp_method_close.method_id: amqp_short_uint;
@@ -6474,6 +6702,21 @@ begin
   end;
 end;
 
+function amqp_method_exchange_declare.getInternal: amqp_bit;
+begin
+ Result := GetFlag(5);
+end;
+
+function amqp_method_exchange_declare.getNoWait: amqp_bit;
+begin
+ Result := GetFlag(6);
+end;
+
+function amqp_method_exchange_declare.getPassive: amqp_bit;
+begin
+ Result := GetFlag(1);
+end;
+
 procedure amqp_method_exchange_declare.Setarguments(AValue: IAMQPProperties);
 begin
   if AValue <> nil then
@@ -6482,9 +6725,29 @@ begin
    Farguments.Clear;
 end;
 
+procedure amqp_method_exchange_declare.setAutoDelete(const Value: amqp_bit);
+begin
+  SetFlag(3, Value);
+end;
+
+procedure amqp_method_exchange_declare.setDurable(const Value: amqp_bit);
+begin
+ SetFlag(2, Value);
+end;
+
 function amqp_method_exchange_declare.Getarguments: IAMQPTable;
 begin
   Result := Farguments;
+end;
+
+function amqp_method_exchange_declare.getAutoDelete: amqp_bit;
+begin
+ Result := GetFlag(3);
+end;
+
+function amqp_method_exchange_declare.getDurable: amqp_bit;
+begin
+ Result := GetFlag(2);
 end;
 
 function amqp_method_exchange_declare.GetSize: amqp_long_long_uint;
@@ -6512,6 +6775,21 @@ procedure amqp_method_exchange_declare.SetFlag(const Index: Integer;
   const Value: amqp_bit);
 begin
   FFlags := SetBit(FFlags, index - 1, Value);
+end;
+
+procedure amqp_method_exchange_declare.setInternal(const Value: amqp_bit);
+begin
+  SetFlag(5, Value);
+end;
+
+procedure amqp_method_exchange_declare.setNoWait(const Value: amqp_bit);
+begin
+ SetFlag(6, Value);
+end;
+
+procedure amqp_method_exchange_declare.setPassive(const Value: amqp_bit);
+begin
+ SetFlag(1, Value);
 end;
 
 procedure amqp_method_exchange_declare.Set_type(const Value: AnsiString);
@@ -6638,6 +6916,16 @@ begin
   Result := fticket;
 end;
 
+function amqp_method_exchange_delete.GetIfUnused: amqp_bit;
+begin
+ Result := GetFlag(1);
+end;
+
+function amqp_method_exchange_delete.GetNoWait: amqp_bit;
+begin
+ Result := GetFlag(2);
+end;
+
 function amqp_method_exchange_delete.GetSize: amqp_long_long_uint;
 begin
   Result := sizeof(fticket) + Fexchange.Size + sizeof(fFlag);
@@ -6662,6 +6950,16 @@ procedure amqp_method_exchange_delete.SetFlag(const Index: Integer;
   const Value: amqp_bit);
 begin
   fFlag := SetBit(fFlag, index - 1, Value);
+end;
+
+procedure amqp_method_exchange_delete.SetIfUnused(const Value: amqp_bit);
+begin
+ SetFlag(1, Value);
+end;
+
+procedure amqp_method_exchange_delete.SetNoWait(const Value: amqp_bit);
+begin
+ SetFlag(2, Value);
 end;
 
 { amqp_method_queue_class }
@@ -6737,9 +7035,34 @@ begin
   Farguments.Write(AStream);
 end;
 
+function amqp_method_queue_declare.getAutoDelete: amqp_bit;
+begin
+ Result := GetFlag(4);
+end;
+
+function amqp_method_queue_declare.getDurable: amqp_bit;
+begin
+ Result := GetFlag(2);
+end;
+
+function amqp_method_queue_declare.getExclusive: amqp_bit;
+begin
+ Result := GetFlag(3);
+end;
+
 function amqp_method_queue_declare.getFlag(const Index: Integer): amqp_bit;
 begin
   Result := GetBit(fFlag, index - 1);
+end;
+
+function amqp_method_queue_declare.getNoWait: amqp_bit;
+begin
+ Result := GetFlag(5);
+end;
+
+function amqp_method_queue_declare.getPassive: amqp_bit;
+begin
+ Result := GetFlag(1);
 end;
 
 function amqp_method_queue_declare.Getarguments: IAMQPProperties;
@@ -6758,6 +7081,21 @@ begin
    Farguments.Assign(AValue)
  else
    Farguments.Clear;
+end;
+
+procedure amqp_method_queue_declare.setAutoDelete(const Value: amqp_bit);
+begin
+ SetFlag(4, Value);
+end;
+
+procedure amqp_method_queue_declare.setDurable(const Value: amqp_bit);
+begin
+ SetFlag(2, Value);
+end;
+
+procedure amqp_method_queue_declare.setExclusive(const Value: amqp_bit);
+begin
+ SetFlag(3, Value);
 end;
 
 function amqp_method_queue_declare.Getqueue: AnsiString;
@@ -6779,6 +7117,16 @@ procedure amqp_method_queue_declare.SetFlag(const Index: Integer;
   const Value: amqp_bit);
 begin
   fFlag := SetBit(fFlag, index - 1, Value);
+end;
+
+procedure amqp_method_queue_declare.setNoWait(const Value: amqp_bit);
+begin
+ SetFlag(5, Value);
+end;
+
+procedure amqp_method_queue_declare.setPassive(const Value: amqp_bit);
+begin
+ SetFlag(1, Value);
 end;
 
 procedure amqp_method_queue_declare.Setqueue(const Value: AnsiString);
@@ -7242,6 +7590,21 @@ begin
   Result := fticket;
 end;
 
+function amqp_method_queue_delete.GetIfEmpty: amqp_bit;
+begin
+ Result := GetFlag(2);
+end;
+
+function amqp_method_queue_delete.GetIfUnused: amqp_bit;
+begin
+ Result := GetFlag(1);
+end;
+
+function amqp_method_queue_delete.GetNoWait: amqp_bit;
+begin
+ Result := GetFlag(3);
+end;
+
 function amqp_method_queue_delete.Getqueue: AnsiString;
 begin
  Result := Fqueue.val;
@@ -7261,6 +7624,21 @@ procedure amqp_method_queue_delete.SetFlag(const Index: Integer;
   const Value: amqp_bit);
 begin
   fFlag := SetBit(fFlag, index - 1, Value)
+end;
+
+procedure amqp_method_queue_delete.SetIfEmpty(const Value: amqp_bit);
+begin
+ SetFlag(2, Value);
+end;
+
+procedure amqp_method_queue_delete.SetIfUnused(const Value: amqp_bit);
+begin
+ SetFlag(1, Value);
+end;
+
+procedure amqp_method_queue_delete.SetNoWait(const Value: amqp_bit);
+begin
+ SetFlag(3, Value);
 end;
 
 procedure amqp_method_queue_delete.Setqueue(const Value: AnsiString);
@@ -7434,9 +7812,29 @@ begin
   Farguments.Write(AStream);
 end;
 
+function amqp_method_basic_consume.getExclusive: amqp_bit;
+begin
+ Result := GetFlag(3);
+end;
+
 function amqp_method_basic_consume.getFlag(const Index: Integer): amqp_bit;
 begin
   Result := GetBit(fFlag, index - 1);
+end;
+
+function amqp_method_basic_consume.getNoAck: amqp_bit;
+begin
+ Result := GetFlag(2);
+end;
+
+function amqp_method_basic_consume.getNoLocal: amqp_bit;
+begin
+ Result := GetFlag(1);
+end;
+
+function amqp_method_basic_consume.getNoWait: amqp_bit;
+begin
+ Result := GetFlag(4);
 end;
 
 function amqp_method_basic_consume.Getarguments: IAMQPProperties;
@@ -7455,6 +7853,11 @@ begin
   Farguments.Assign(AValue)
  else
   Farguments.Clear;
+end;
+
+procedure amqp_method_basic_consume.setExclusive(const Value: amqp_bit);
+begin
+ SetFlag(3, Value);
 end;
 
 function amqp_method_basic_consume.Getqueue: AnsiString;
@@ -7477,6 +7880,21 @@ procedure amqp_method_basic_consume.SetFlag(const Index: Integer;
   const Value: amqp_bit);
 begin
   fFlag := SetBit(fFlag, index - 1, Value);
+end;
+
+procedure amqp_method_basic_consume.setNoAck(const Value: amqp_bit);
+begin
+ SetFlag(2, Value);
+end;
+
+procedure amqp_method_basic_consume.setNoLocal(const Value: amqp_bit);
+begin
+ SetFlag(1, Value);
+end;
+
+procedure amqp_method_basic_consume.setNoWait(const Value: amqp_bit);
+begin
+ SetFlag(4, Value);
 end;
 
 procedure amqp_method_basic_consume.Setqueue(const Value: AnsiString);
@@ -7645,6 +8063,16 @@ begin
   Result := fticket;
 end;
 
+function amqp_method_basic_publish.GetImmediate: amqp_bit;
+begin
+ Result := GetFlag(2);
+end;
+
+function amqp_method_basic_publish.GetMandatory: amqp_bit;
+begin
+ Result := GetFlag(1);
+end;
+
 function amqp_method_basic_publish.GetSize: amqp_long_long_uint;
 begin
   Result := sizeof(fticket) + inherited GetSize + sizeof(fFlag);
@@ -7659,6 +8087,16 @@ procedure amqp_method_basic_publish.SetFlag(const Index: Integer;
   const Value: amqp_bit);
 begin
   fFlag := SetBit(fFlag, index - 1, Value);
+end;
+
+procedure amqp_method_basic_publish.SetImmediate(const Value: amqp_bit);
+begin
+ SetFlag(2, Value);
+end;
+
+procedure amqp_method_basic_publish.SetMandatory(const Value: amqp_bit);
+begin
+ SetFlag(1, Value);
 end;
 
 procedure amqp_method_basic_publish.Setticket(AValue: amqp_short_uint);
@@ -8649,6 +9087,11 @@ begin
  Result := GetBit(fFlag, Index - 1);
 end;
 
+function amqp_method_basic_ack.getMulitple: amqp_bit;
+begin
+ Result := GetFlag(1);
+end;
+
 function amqp_method_basic_ack.GetSize: amqp_long_long_uint;
 begin
  result := SizeOf(FdeliveryTag) + SizeOf(fFlag)
@@ -8662,6 +9105,11 @@ end;
 procedure amqp_method_basic_ack.setFlag(const Index: Integer; const Value: amqp_bit);
 begin
  fFlag := SetBit(fFlag, Index-1, Value);
+end;
+
+procedure amqp_method_basic_ack.setMulitple(const Value: amqp_bit);
+begin
+ SetFlag(1, Value);
 end;
 
 { amqp_method_basic_reject }
@@ -8743,6 +9191,11 @@ begin
  result := inherited getFlag(Index);
 end;
 
+function amqp_method_basic_nack.getRequeue: amqp_bit;
+begin
+ Result := GetFlag(2);
+end;
+
 class function amqp_method_basic_nack.method_id: amqp_short_uint;
 begin
  Result := 120;
@@ -8751,6 +9204,11 @@ end;
 procedure amqp_method_basic_nack.setFlag(const Index: Integer; const Value: amqp_bit);
 begin
  inherited setFlag(Index, Value);
+end;
+
+procedure amqp_method_basic_nack.setRequeue(const Value: amqp_bit);
+begin
+  SetFlag(2, Value);
 end;
 
 { amqp_method_tx_class }
@@ -8949,7 +9407,8 @@ if famqp_method_factory <> nil then
   famqp_method_factory.Clear;
   FreeAndNil(famqp_method_factory);
  end;
-
+{$IfDef FPC}
 if FDebugList <> nil then
  FreeAndNil(FDebugList);
+{$EndIf}
 end.
