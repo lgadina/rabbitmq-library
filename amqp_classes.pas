@@ -175,7 +175,7 @@ begin
  if not AtLeast(1) then
   begin
    FEvent.ResetEvent;
-   if FEvent.WaitFor(FTimeout) = wrSignaled then
+   if FEvent.WaitFor(INFINITE) = wrSignaled then
     Result := inherited Pop
    else
     raise EBlockedQueueTimeout.CreateFmt('Event timeout %d', [FTimeout]);

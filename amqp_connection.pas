@@ -1,7 +1,9 @@
 {$i ampq2.inc}
-{$Define AMQP_DEBUG}
-{$IfDef AMQP_DEBUG}
-  {$Define AMQP_DEBUG_FRAME}
+{$IfDef DEBUG}
+ {$Define AMQP_DEBUG}
+ {$IfDef AMQP_DEBUG}
+   {$Define AMQP_DEBUG_FRAME}
+ {$EndIf}
 {$EndIf}
 
 unit amqp_connection;
