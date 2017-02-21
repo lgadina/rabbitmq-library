@@ -19,7 +19,7 @@ type
   IAMQPMessage = interface;
   IAMQPChannelAck = interface;
 
-  TAMQPConsumerMethod = procedure (AChannel: IAMQPChannel; AMQPMessage: IAMQPMessage; var SendAck: Boolean) of object;
+  TAMQPConsumerMethod = procedure (AChannel: IAMQPChannel; AMQPMessage: IAMQPMessage; AUserData: Pointer; var SendAck: Boolean) of object;
 
   IAMQPQueue = interface
   ['{D460FA01-A169-456D-98F0-BBFD7B9E3B3C}']
@@ -79,6 +79,11 @@ type
    Procedure MessageException(AMessage: IAMQPMessage; AException: Exception);
   end;
 
+  IAMQPChannelPublish = interface
+  ['{6B8EC2A7-F9BA-4DE3-AA72-2F9DB0F81050}']
+    Procedure BasicPublish( AMsg: IAMQPMessage );
+  end;
+
   { IAMQPChannel }
 
   IAMQPChannel = interface(IAMQPChannelAck)
@@ -93,6 +98,7 @@ type
     property Id: Word read GetId;
     //property Queue: TAMQPFrameQueue read GetQueue;
     property IsOpen: Boolean read GetIsOpen;
+    function NewMessage: IAMQPMessage;
     procedure ConfirmSelect(ANoWait: Boolean);
     procedure CancelConsumers;
     Procedure ExchangeDeclare( AExchangeName, AType: String; AProperties: IAMQPProperties = nil; APassive: Boolean = False; ADurable : Boolean = True; AAutoDelete:
@@ -128,9 +134,10 @@ type
 
     function BasicGet(AQueueName: String; ANoAck: Boolean): IAMQPMessage;
     procedure BasicCancel(AConsumerTag: AnsiString; ANoWait: Boolean);
-    procedure BasicConsume(AMessageQueue: IAMQPMessageQueue; AQueueName: String; var AConsumerTag: String; ANoLocal, ANoAck, AExclusive, ANoWait: Boolean); overload;
+    procedure BasicConsume(AMessageQueue: IAMQPMessageQueue; AQueueName: String;
+              var AConsumerTag: String; ANoLocal, ANoAck, AExclusive, ANoWait: Boolean; AUserData: Pointer = nil); overload;
     Procedure BasicConsume( AMessageHandler: TAMQPConsumerMethod; AQueueName: String; var AConsumerTag: String; ANoLocal: Boolean = False;
-                            ANoAck: Boolean = False; AExclusive: Boolean = False; ANoWait: Boolean = False ); Overload;
+              ANoAck: Boolean = False; AExclusive: Boolean = False; ANoWait: Boolean = False; AUserData: Pointer = nil); Overload;
   end;
 
  {$IfDef USE_CONSUMER_THREAD}
@@ -252,6 +259,7 @@ type
     property BodyHash: String read GetBodyHash;
 {$EndIf}
     property Channel: IAMQPChannelAck read GetChannel write SetChannel;
+    procedure Publish;
   end;
 
 implementation

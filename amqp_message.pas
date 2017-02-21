@@ -36,10 +36,10 @@ type
     FMessageId: AnsiString;
     FDeliveryMode: TAMQPDeliveryMode;
     FPriority: Byte;
-    FBody: TIdBytes;
+    FBody: TAMQPBody;
     FPosition: UInt64;
     function GetAppId: AnsiString;
-    function GetBody: TIdBytes;
+    function GetBody: TAMQPBody;
     function GetBodyAsString: AnsiString;
 {$IfDef FPC}
     function GetBodyHash: String;
@@ -115,6 +115,7 @@ type
     procedure BodyFromBytes(ABytes: TBytes);
     procedure Ack;
     procedure NoAck(ARequeue: Boolean = True);
+    procedure Publish;
     property DeliveryTag: UInt64 read GetDeliveryTag;
     property Redelivered: Boolean read GetRedelivered;
     property Exchange: AnsiString read GetExchange write SetExchange;
@@ -137,7 +138,7 @@ type
     property userId: AnsiString read GetUserId write SetUserId;
     property appId: AnsiString read GetAppId write SetAppId;
     property clusterId: AnsiString read GetClusterId write SetClusterId;
-    property Body: TIdBytes read GetBody;
+    property Body: TAMQPBody read GetBody;
     property BodyAsString: AnsiString read GetBodyAsString write SetBodyAsString;
     property HdrAsString[AName: AnsiString]: AnsiString read GetHdrAsString write SetHdrAsString;
     property HdrAsBoolean[AName: AnsiString]: Boolean read GetHdrAsBoolean write SetHdrAsBoolean;
@@ -337,6 +338,21 @@ begin
   end;
 end;
 
+procedure TAMQPMessage.Publish;
+var Obj: IAMQPChannelPublish;
+begin
+ try
+  if (FChannel <> nil) and Supports(FChannel, IAMQPChannelPublish, Obj)  then
+     Obj.BasicPublish(Self);
+ except
+   on e: exception do
+    if FChannel <> nil then
+      FChannel.MessageException(Self, E)
+    else
+      raise;
+ end;
+end;
+
 procedure TAMQPMessage.SetBodySize(const Value: UInt64);
 begin
   FBodySize := Value;
@@ -484,7 +500,7 @@ begin
   Result := FAppId;
 end;
 
-function TAMQPMessage.GetBody: TIdBytes;
+function TAMQPMessage.GetBody: TAMQPBody;
 begin
  Result := FBody;
 end;

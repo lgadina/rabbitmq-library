@@ -18,6 +18,7 @@ uses
   Classes
   , SysUtils
   , IdTCPClient
+  , IdIOHandler
   , amqp_types
   , contnrs
   , syncobjs
@@ -111,10 +112,13 @@ type
           FSendAck: Boolean;
           FSemaphore: TAMQPSemaphore;
           FConsumerSemaphore: TAMQPSemaphore;
+          FUserData: Pointer;
         protected
           procedure Execute; override;
         public
-         constructor Create(AConsumer: TAMQPConsumer; AMessage: IAMQPMessage; AConsumerSemaphore: TAMQPSemaphore = {$IfDef FPC}-1{$Else}Nil{$EndIf}; ASemaphore: TAMQPSemaphore = {$IfDef FPC}-1{$Else}Nil{$EndIf});
+         constructor Create(AConsumer: TAMQPConsumer; AMessage: IAMQPMessage; AUserData: Pointer;
+            AConsumerSemaphore: TAMQPSemaphore = {$IfDef FPC}-1{$Else}Nil{$EndIf};
+            ASemaphore: TAMQPSemaphore = {$IfDef FPC}-1{$Else}Nil{$EndIf});
          destructor Destroy; override;
         end;
       {$EndIf}
@@ -131,13 +135,14 @@ type
     FMessageHandler: TAMQPConsumerMethod;
     FMessageQueue: IAMQPMessageQueue;
     FQueueName: String;
+    FUserData: Pointer;
     FLock: TCriticalSection;
     FChannel: IAMQPChannel;
    {$IfDef USE_CONSUMER_THREAD}
     procedure WaitAllThreadEnd;
    {$EndIf}
   protected
-    procedure DoReceive(AChannel: IAMQPChannel; AMessage: IAMQPMessage; out SendAck: Boolean);
+    procedure DoReceive(AChannel: IAMQPChannel; AMessage: IAMQPMessage; AUserData: Pointer; out SendAck: Boolean);
    {$IfDef USE_CONSUMER_THREAD}
     procedure DoIncStat;
     procedure DoDecStat;
@@ -152,7 +157,7 @@ type
     Property MessageQueue   : IAMQPMessageQueue read FMessageQueue;
     Procedure Receive( AMessage: IAMQPMessage );
     Constructor Create( AChannel: IAMQPChannel; AQueueName, AConsumerTag: String; AMessageHandler: TAMQPConsumerMethod;
-      AMessageQueue: IAMQPMessageQueue{$IfDef USE_CONSUMER_THREAD}; ASemaphore: TAMQPSemaphore; AMaxThread: Word{$EndIf});
+      AMessageQueue: IAMQPMessageQueue{$IfDef USE_CONSUMER_THREAD}; ASemaphore: TAMQPSemaphore; AMaxThread: Word{$EndIf}; AUserData: Pointer);
     Destructor Destroy; Override;
   end;
 
@@ -230,7 +235,7 @@ type
 
   { TAMQPChannel }
 
-  TAMQPChannel = class(TInterfacedObject, IAMQPChannel, IAMQPChannelAck{$IfDef USE_CONSUMER_THREAD}, IAMQPChannelStat{$EndIf})
+  TAMQPChannel = class(TInterfacedObject, IAMQPChannel, IAMQPChannelPublish, IAMQPChannelAck{$IfDef USE_CONSUMER_THREAD}, IAMQPChannelStat{$EndIf})
   strict private
     FConnection: IAMQPConnection;
     FID: Word;
@@ -254,7 +259,8 @@ type
     function GetTimeout: Integer;
     procedure SetTimeout(AValue: Integer);
   protected
-    procedure AddConsumer(AQueueName: String; var AConsumerTag: String; AMessageHandler: TAMQPConsumerMethod; AMessageQueue: IAMQPMessageQueue);
+    procedure AddConsumer(AQueueName: String; var AConsumerTag: String;
+              AMessageHandler: TAMQPConsumerMethod; AMessageQueue: IAMQPMessageQueue; AUserData: Pointer);
     procedure RemoveConsumer(AConsumerTag: String);
     Function HasCompleteMessageInQueue( AQueue: TAMQPFrameList): Boolean;
     procedure CheckDeliveryComplete;
@@ -281,6 +287,8 @@ type
   public
     constructor Create(AConnection: IAMQPConnection; AChannelId: Word{$IfDef USE_CONSUMER_THREAD}; ASemaphore: TAMQPSemaphore; AChannelMaxThread: Word{$EndIf});
     destructor Destroy; override;
+    function NewMessage: IAMQPMessage;
+
     property Id: Word read GetId;
     property Queue: TAMQPFrameQueue read GetQueue;
 
@@ -321,9 +329,10 @@ type
 
     function BasicGet(AQueueName: String; ANoAck: Boolean): IAMQPMessage;
     procedure BasicCancel(AConsumerTag: AnsiString; ANoWait: Boolean);
-    procedure BasicConsume(AMessageQueue: IAMQPMessageQueue; AQueueName: String; var AConsumerTag: String; ANoLocal, ANoAck, AExclusive, ANoWait: Boolean); overload;
+    procedure BasicConsume(AMessageQueue: IAMQPMessageQueue; AQueueName: String;
+              var AConsumerTag: String; ANoLocal, ANoAck, AExclusive, ANoWait: Boolean; AUserData: Pointer = nil); overload;
     Procedure BasicConsume( AMessageHandler: TAMQPConsumerMethod; AQueueName: String; var AConsumerTag: String; ANoLocal: Boolean = False;
-                            ANoAck: Boolean = False; AExclusive: Boolean = False; ANoWait: Boolean = False ); Overload;
+              ANoAck: Boolean = False; AExclusive: Boolean = False; ANoWait: Boolean = False; AUserData: Pointer = nil ); Overload;
 
 
     Procedure BasicReject( AMessage: IAMQPMessage; ARequeue: Boolean = True ); overload;
@@ -380,6 +389,8 @@ type
     procedure SetChannelMaxThread(AValue: Word);
     procedure SetMaxThread(AValue: Word);
    {$endif}
+    function GetIOHandler: TIdIOHandler;
+    procedure SetIOHandler(AValue: TIdIOHandler);
 
     function GetHost: String;
     function GetMaxSize: Integer;
@@ -432,6 +443,7 @@ type
     destructor Destroy; override;
     procedure Connect;
     procedure Disconnect;
+    property IOHandler: TIdIOHandler read GetIOHandler write SetIOHandler;
    {$IfDef USE_CONSUMER_THREAD}
     property MaxThread: Word read GetMaxThread write SetMaxThread;
     property ChannelMaxThread: Word read GetChannelMaxThread write SetChannelMaxThread;
@@ -481,7 +493,11 @@ begin
  DbgLock.Enter;
  {$EndIf}
  try
+ {$IfDef FPC}
   Write(AMsg, #13#10);
+ {$Else}
+  DebugOutput(AMsg);
+ {$EndIf}
  finally
   {$IfDef FPC}
    LeaveCriticalsection(DbgLock);
@@ -516,20 +532,20 @@ begin
   {$EndIf}
  {$EndIf}
  try
-  FConsumer.DoReceive(FConsumer.FChannel,  FMessage, FSendAck);
+  FConsumer.DoReceive(FConsumer.FChannel,  FMessage, FUserData, FSendAck);
  finally
   Terminate;
  end;
 end;
 
 constructor TAMQPConsumer.TConsumeThread.Create(AConsumer: TAMQPConsumer;
-  AMessage: IAMQPMessage; AConsumerSemaphore: TAMQPSemaphore;
+  AMessage: IAMQPMessage; AUserData: Pointer; AConsumerSemaphore: TAMQPSemaphore;
   ASemaphore: TAMQPSemaphore);
 begin
   FSemaphore := ASemaphore;
   FConsumerSemaphore := AConsumerSemaphore;
   FConsumer := AConsumer;
-
+  FUserData := AUserData;
   FMessage := AMessage;
   FreeOnTerminate := True;
   {$IfDef FPC}
@@ -757,7 +773,7 @@ end;
 
 procedure TAMQPChannel.AddConsumer(AQueueName: String;
   var AConsumerTag: String; AMessageHandler: TAMQPConsumerMethod;
-  AMessageQueue: IAMQPMessageQueue);
+  AMessageQueue: IAMQPMessageQueue; AUserData: Pointer);
 var
   Consumer: TAMQPConsumer;
 begin
@@ -770,7 +786,8 @@ begin
   for Consumer in FConsumers do
     if (Consumer.ConsumerTag = AConsumerTag) then
       raise AMQPException.Create('Duplicate consumer');
-  FConsumers.Add(TAMQPConsumer.Create(Self, AQueueName, AConsumerTag, AMessageHandler, AMessageQueue{$IfDef USE_CONSUMER_THREAD}, FSemaphore, FChannelMaxThread{$EndIf}));
+  FConsumers.Add(TAMQPConsumer.Create(Self, AQueueName, AConsumerTag, AMessageHandler,
+    AMessageQueue{$IfDef USE_CONSUMER_THREAD}, FSemaphore, FChannelMaxThread{$EndIf}, AUserData));
 end;
 
 procedure TAMQPChannel.RemoveConsumer(AConsumerTag: String);
@@ -1089,6 +1106,12 @@ begin
   inherited Destroy;
 end;
 
+function TAMQPChannel.NewMessage: IAMQPMessage;
+begin
+  Result := TAMQPMessage.Create;
+  Result.Channel := Self;
+end;
+
 procedure TAMQPChannel.ExchangeDeclare(AExchangeName, AType: String; AProperties: IAMQPProperties = nil;
     APassive: Boolean = False; ADurable : Boolean = True; AAutoDelete: Boolean = False;
     AInternal: Boolean = False; ANoWait: Boolean = False);
@@ -1354,18 +1377,17 @@ end;
 
 procedure TAMQPChannel.BasicConsume(AMessageQueue: IAMQPMessageQueue;
   AQueueName: String; var AConsumerTag: String; ANoLocal, ANoAck, AExclusive,
-  ANoWait: Boolean);
+  ANoWait: Boolean; AUserData: Pointer = nil);
 begin
-  AddConsumer(AQueueName, AConsumerTag, nil, AMessageQueue);
+  AddConsumer(AQueueName, AConsumerTag, nil, AMessageQueue, AUserData);
   WriteFrame(amqp_method_basic_consume.create_frame(FID, 0, AQueueName, AConsumerTag, ANoLocal, ANoAck, AExclusive, ANoWait, nil));
   ReadMethod([IAMQPBasicConsumeOk]);
 end;
 
-procedure TAMQPChannel.BasicConsume(AMessageHandler: TAMQPConsumerMethod;
-  AQueueName: String; var AConsumerTag: String; ANoLocal: Boolean; ANoAck: Boolean;
-  AExclusive: Boolean; ANoWait: Boolean);
+procedure TAMQPChannel.BasicConsume( AMessageHandler: TAMQPConsumerMethod; AQueueName: String; var AConsumerTag: String; ANoLocal: Boolean = False;
+              ANoAck: Boolean = False; AExclusive: Boolean = False; ANoWait: Boolean = False; AUserData: Pointer = nil );
 begin
-  AddConsumer(AQueueName, AConsumerTag, AMessageHandler, nil);
+  AddConsumer(AQueueName, AConsumerTag, AMessageHandler, nil, AUserData);
   WriteFrame(amqp_method_basic_consume.create_frame(FID, 0, AQueueName, AConsumerTag, ANoLocal, ANoAck, AExclusive, ANoWait, nil));
   ReadMethod([IAMQPBasicConsumeOk]);
 end;
@@ -1445,7 +1467,7 @@ begin
 end;
 {$EndIf}
 
-procedure TAMQPConsumer.DoReceive(AChannel: IAMQPChannel; AMessage: IAMQPMessage; out SendAck: Boolean);
+procedure TAMQPConsumer.DoReceive(AChannel: IAMQPChannel; AMessage: IAMQPMessage; AUserData: Pointer; out SendAck: Boolean);
 //var SendAck: Boolean;
 begin
  if FMessageQueue <> nil then
@@ -1454,7 +1476,7 @@ begin
    begin
      SendAck := True;
      if Assigned(FMessageHandler) then
-        FMessageHandler(AChannel, AMessage, SendAck);
+        FMessageHandler(AChannel, AMessage, FUserData, SendAck);
 //    if SendAck then
 //       AMessage.Ack;
    end;
@@ -1487,12 +1509,14 @@ begin
 end;
 
 procedure TAMQPConsumer.Receive(AMessage: IAMQPMessage);
+{$IfNDef USE_CONSUMER_THREAD}
 var
   SendAck: Boolean;
+{$EndIf}
 begin
  {$IfDef USE_CONSUMER_THREAD}
  try
-  TConsumeThread.Create(Self, AMessage, FConsumerSemaphore, FSemaphore);
+  TConsumeThread.Create(Self, AMessage, FUserData, FConsumerSemaphore, FSemaphore);
  finally
  end;
  {$Else}
@@ -1506,7 +1530,7 @@ end;
 constructor TAMQPConsumer.Create(AChannel: IAMQPChannel; AQueueName,
   AConsumerTag: String; AMessageHandler: TAMQPConsumerMethod;
   AMessageQueue: IAMQPMessageQueue{$IfDef USE_CONSUMER_THREAD}; ASemaphore: TAMQPSemaphore;
-  AMaxThread: Word{$EndIf});
+  AMaxThread: Word{$EndIf}; AUserData: Pointer);
 {$IfDef USE_CONSUMER_THREAD}
  {$IfDef FPC}
   var semArgs: TSEMun;
@@ -1518,6 +1542,7 @@ begin
   FConsumerTag := AConsumerTag;
   FMessageHandler := AMessageHandler;
   FMessageQueue := AMessageQueue;
+  FUserData := AUserData;
   FLock := TCriticalSection.Create;
  {$IfDef USE_CONSUMER_THREAD}
   FSemaphore := ASemaphore;
@@ -1790,6 +1815,14 @@ begin
   Result := FHost;
 end;
 
+function TAMQPConnection.GetIOHandler: TIdIOHandler;
+begin
+ Result := nil;
+ if FTCP <> nil then
+  Result := FTCP.IOHandler;
+end;
+
+
 {$IfDef USE_CONSUMER_THREAD}
 function TAMQPConnection.GetConsumerThreadCount: Integer;
 begin
@@ -1848,6 +1881,12 @@ begin
  end;
 end;
 {$EndIf}
+
+procedure TAMQPConnection.SetIOHandler(AValue: TIdIOHandler);
+begin
+  FTCP.IOHandler := AValue;
+end;
+
 
 procedure TAMQPConnection.SetHost(AValue: String);
 begin
